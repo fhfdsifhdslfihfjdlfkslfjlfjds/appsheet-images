@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>配置図ビューア</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --pin-color: #dc2626;
+    --pin-glow: rgba(220, 38, 38, 0.4);
+    --header-bg: #1e293b;
+    --header-text: #f1f5f9;
+    --body-bg: #e2e8f0;
+  }
+
+  html, body {
+    height: 100%; width: 100%;
+    overflow: hidden;
+    background: var(--body-bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+
+  /* ── Header ── */
+  #header {
+    position: fixed; top: 0; left: 0; right: 0;
+    height: 50px;
+    background: var(--header-bg);
+    color: var(--header-text);
+    display: flex; align-items: center;
+    padding: 0 8px;
+    z-index: 100;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+  }
+  .hbtn {
+    width: 38px; height: 38px;
+    display: flex; align-items: center; justify-content: center;
+    border: none; background: rgba(255,255,255,0.08);
+    color: #fff; border-radius: 10px; cursor: pointer;
+    font-size: 18px; flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .hbtn:active { background: rgba(255,255,255,0.2); }
+  .hbtn.active { background: rgba(59,130,246,0.5); }
+  #headerTitle {
+    flex: 1; text-align: center;
+    font-size: 14px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding: 0 6px;
+    line-height: 1.3;
+  }
+  #headerSub {
+    font-size: 11px; font-weight: 400; opacity: 0.7;
+    display: block;
+  }
+
+  /* ── Viewport ── */
+  #viewport {
+    position: absolute;
+    top: 50px; left: 0; right: 0; bottom: 0;
+    overflow: hidden;
+    cursor: grab;
+    background: var(--body-bg);
+  }
+  #viewport:active { cursor: grabbing; }
+
+  #canvas {
+    position: absolute;
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+  #canvas svg {
+    display: block;
+  }
+
+  /* ── Pin ── */
+  .pin-wrap {
+    position: absolute;
+    pointer-events: none;
+    z-index: 10;
+    transform: translate(-50%, -100%);
+  }
+  .pin-svg {
+    width: 36px; height: 50px;
+    filter: drop-shadow(0 3px 8px rgba(0,0,0,0.4));
+    animation: pinDrop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    animation-delay: 0.3s;
+    opacity: 0;
+  }
+  @keyframes pinDrop {
+    0% { transform: translateY(-80px) scale(0.2); opacity: 0; }
+    70% { transform: translateY(4px) scale(1.05); opacity: 1; }
+    100% { transform: translateY(0) scale(1); opacity: 1; }
+  }
+  .pin-ring {
+    position: absolute;
+    bottom: -6px; left: 50%; transform: translateX(-50%);
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--pin-glow);
+    animation: ring 2s ease-in-out infinite;
+    animation-delay: 0.8s;
+  }
+  @keyframes ring {
+    0%, 100% { transform: translateX(-50%) scale(1); opacity: 0.5; }
+    50% { transform: translateX(-50%) scale(3); opacity: 0; }
+  }
+  .pin-label {
+    position: absolute;
+    bottom: 56px; left: 50%; transform: translateX(-50%);
+    background: #fff;
+    border: 2px solid var(--pin-color);
+    border-radius: 8px;
+    padding: 5px 12px;
+    font-size: 13px; font-weight: 700;
+    color: #1e293b;
+    white-space: nowrap;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+    animation: labelIn 0.3s 0.7s ease both;
+  }
+  .pin-label::after {
+    content: '';
+    position: absolute;
+    bottom: -9px; left: 50%; transform: translateX(-50%);
+    border: 8px solid transparent;
+    border-top-color: var(--pin-color);
+    border-bottom: none;
+  }
+  @keyframes labelIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+
+  /* ── Coord tooltip (calibration mode) ── */
+  .coord-tip {
+    position: absolute;
+    pointer-events: none;
+    z-index: 20;
+    background: rgba(30,41,59,0.92);
+    color: #fff;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px; font-weight: 600;
+    font-family: "SF Mono", "Menlo", monospace;
+    white-space: nowrap;
+    transform: translate(-50%, -130%);
+    animation: tipPop 0.15s ease;
+  }
+  .coord-tip::after {
+    content: '';
+    position: absolute;
+    bottom: -5px; left: 50%; transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: rgba(30,41,59,0.92);
+    border-bottom: none;
+  }
+  @keyframes tipPop { from { transform: translate(-50%,-130%) scale(0.8); } }
+
+  /* ── Crosshair ── */
+  .crosshair-h, .crosshair-v {
+    position: absolute;
+    pointer-events: none;
+    z-index: 9;
+    background: rgba(59,130,246,0.35);
+  }
+  .crosshair-h { height: 1px; left: 0; right: 0; }
+  .crosshair-v { width: 1px; top: 0; bottom: 0; }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed;
+    bottom: 28px; left: 50%; transform: translateX(-50%);
+    background: rgba(30,41,59,0.88);
+    color: #fff;
+    padding: 8px 20px;
+    border-radius: 24px;
+    font-size: 12px;
+    z-index: 200;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+    text-align: center;
+    max-width: 90%;
+  }
+  #toast.show { opacity: 1; }
+
+  /* ── Loading ── */
+  #loading {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 12px;
+    background: var(--body-bg);
+    z-index: 300;
+    transition: opacity 0.4s;
+  }
+  #loading.hide { opacity: 0; pointer-events: none; }
+  .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid #cbd5e1;
+    border-top-color: var(--pin-color);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .load-text { font-size: 13px; color: #64748b; }
+
+  /* ── No-param ── */
+  #noparam {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 16px;
+    background: var(--body-bg);
+    z-index: 300;
+    padding: 24px;
+    text-align: center;
+  }
+  #noparam h2 { font-size: 18px; color: #1e293b; }
+  #noparam p  { font-size: 13px; color: #64748b; line-height: 1.7; }
+  #noparam code {
+    background: #cbd5e1; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px;
+  }
+  #noparam .btn-cal {
+    display: inline-block;
+    padding: 10px 24px;
+    background: #3b82f6;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <button class="hbtn" onclick="history.back()" aria-label="戻る">‹</button>
+  <div id="headerTitle">配置図</div>
+  <button class="hbtn" id="coordBtn" onclick="toggleCoordMode()" aria-label="座標モード" title="座標取得モード">⊕</button>
+  <button class="hbtn" onclick="resetToPin()" aria-label="ピンに戻る" title="ピン位置に戻る">◎</button>
+  <button class="hbtn" onclick="fitAll()" aria-label="全体表示" title="全体表示">▣</button>
+</div>
+
+<div id="viewport">
+  <div id="canvas"></div>
+</div>
+
+<div id="toast"></div>
+<div id="loading"><div class="spinner"></div><div class="load-text">配置図を読み込み中...</div></div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ── URL params ──
+  const P = new URLSearchParams(location.search);
+  const pinX    = parseFloat(P.get('x'));
+  const pinY    = parseFloat(P.get('y'));
+  const pinName = P.get('name') || '';
+  const hasPin  = !isNaN(pinX) && !isNaN(pinY);
+  const calMode = P.get('mode') === 'calibrate';
+
+  // If no pin AND not calibrate mode, show instructions
+  if (!hasPin && !calMode) {
+    document.getElementById('loading').classList.add('hide');
+    const el = document.createElement('div');
+    el.id = 'noparam';
+    el.innerHTML = `
+      <h2>📍 冷蔵庫配置図ビューア</h2>
+      <p>AppSheetの商品詳細画面から<br>「配置図を見る」で開くと、<br>その商品の位置にピンが表示されます。</p>
+      <p>パラメータ例:<br><code>?x=420&y=300&name=ST%2314M</code></p>
+      <p style="margin-top:8px">座標を調べるには:</p>
+      <a class="btn-cal" href="?mode=calibrate">座標取得モードで開く</a>
+    `;
+    document.body.appendChild(el);
+    return;
+  }
+
+  // Set header
+  if (pinName) {
+    document.getElementById('headerTitle').innerHTML =
+      pinName + '<span id="headerSub">配置図</span>';
+  }
+
+  // ── Config ──
+  const SVG_URL = 'layout.svg';
+  const MIN_SCALE = 0.3;
+  const MAX_SCALE = 12;
+  const ZOOM_PIN  = 3.0;
+  const ANIM_MS   = 550;
+
+  // ── State ──
+  let svgW = 0, svgH = 0;
+  let sc = 1, tx = 0, ty = 0;
+  let dragging = false, dragStartX, dragStartY, dragTx0, dragTy0;
+  let pinchDist0 = 0, pinchCx, pinchCy;
+  let coordModeOn = calMode;
+  let coordTips = [];
+
+  const vp = document.getElementById('viewport');
+  const cv = document.getElementById('canvas');
+  const ld = document.getElementById('loading');
+
+  if (coordModeOn) document.getElementById('coordBtn').classList.add('active');
+
+  // ── Load SVG ──
+  fetch(SVG_URL)
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.text(); })
+    .then(initSVG)
+    .catch(err => {
+      console.error('SVG load failed:', err);
+      svgW = 842; svgH = 595;
+      cv.innerHTML = makePlaceholder(svgW, svgH);
+      afterLoad();
+    });
+
+  function initSVG(svgText) {
+    cv.innerHTML = svgText;
+    const el = cv.querySelector('svg');
+    if (!el) { svgW = 842; svgH = 595; cv.innerHTML = makePlaceholder(svgW, svgH); afterLoad(); return; }
+
+    const vb = el.getAttribute('viewBox');
+    if (vb) {
+      const p = vb.split(/[\s,]+/).map(Number);
+      svgW = p[2]; svgH = p[3];
+    } else {
+      svgW = parseFloat(el.getAttribute('width')) || 842;
+      svgH = parseFloat(el.getAttribute('height')) || 595;
+    }
+    el.setAttribute('width', svgW);
+    el.setAttribute('height', svgH);
+    el.style.display = 'block';
+    afterLoad();
+  }
+
+  function afterLoad() {
+    if (hasPin) addPin(pinX, pinY, pinName);
+    fitToView();
+    setTimeout(() => {
+      ld.classList.add('hide');
+      if (hasPin) {
+        setTimeout(() => animTo(pinTx(), pinTy(), ZOOM_PIN), 100);
+        toast('ピンチで拡大 ・ ドラッグで移動');
+      } else if (calMode) {
+        toast('タップで座標を取得できます');
+      }
+    }, 150);
+  }
+
+  function pinTx() { return vp.clientWidth / 2 - pinX * ZOOM_PIN; }
+  function pinTy() { return vp.clientHeight / 2 - pinY * ZOOM_PIN; }
+
+  // ── Pin ──
+  function addPin(x, y, name) {
+    const d = document.createElement('div');
+    d.className = 'pin-wrap';
+    d.style.left = x + 'px';
+    d.style.top  = y + 'px';
+    d.innerHTML = `
+      <div class="pin-ring"></div>
+      <svg class="pin-svg" viewBox="0 0 36 50" xmlns="http://www.w3.org/2000/svg">
+        <path d="M18 0C8.06 0 0 8.06 0 18c0 13.5 18 32 18 32s18-18.5 18-32C36 8.06 27.94 0 18 0z" fill="#dc2626"/>
+        <circle cx="18" cy="17" r="7.5" fill="white" opacity="0.9"/>
+      </svg>
+      ${name ? `<div class="pin-label">${esc(name)}</div>` : ''}
+    `;
+    cv.appendChild(d);
+  }
+
+  function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+  // ── View ──
+  function fitToView() {
+    const vw = vp.clientWidth, vh = vp.clientHeight;
+    sc = Math.min(vw / svgW, vh / svgH) * 0.95;
+    tx = (vw - svgW * sc) / 2;
+    ty = (vh - svgH * sc) / 2;
+    applyTf();
+  }
+
+  function applyTf() {
+    cv.style.transform = `translate(${tx}px,${ty}px) scale(${sc})`;
+  }
+
+  function animTo(toTx, toTy, toSc) {
+    const f = { tx, ty, sc: sc };
+    const s = performance.now();
+    (function step(now) {
+      let t = Math.min((now - s) / ANIM_MS, 1);
+      t = 1 - Math.pow(1 - t, 3);
+      sc = f.sc + (toSc - f.sc) * t;
+      tx = f.tx + (toTx - f.tx) * t;
+      ty = f.ty + (toTy - f.ty) * t;
+      applyTf();
+      if (t < 1) requestAnimationFrame(step);
+    })(performance.now());
+  }
+
+  window.resetToPin = function() {
+    if (hasPin) animTo(pinTx(), pinTy(), ZOOM_PIN);
+  };
+  window.fitAll = function() {
+    const vw = vp.clientWidth, vh = vp.clientHeight;
+    const s = Math.min(vw / svgW, vh / svgH) * 0.95;
+    animTo((vw - svgW * s) / 2, (vh - svgH * s) / 2, s);
+  };
+  window.toggleCoordMode = function() {
+    coordModeOn = !coordModeOn;
+    document.getElementById('coordBtn').classList.toggle('active', coordModeOn);
+    // Remove existing tips
+    coordTips.forEach(e => e.remove());
+    coordTips = [];
+    toast(coordModeOn ? '座標取得モード ON（タップで座標表示）' : '座標取得モード OFF');
+  };
+
+  // ── Toast ──
+  function toast(msg, ms) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.classList.remove('show'), ms || 3000);
+  }
+
+  // ── Coord mode tap ──
+  function showCoord(clientX, clientY) {
+    if (!coordModeOn) return;
+    const rect = vp.getBoundingClientRect();
+    const cx = (clientX - rect.left - tx) / sc;
+    const cy = (clientY - rect.top  - ty) / sc;
+    const rx = Math.round(cx * 10) / 10;
+    const ry = Math.round(cy * 10) / 10;
+
+    // Remove old tips (keep max 5)
+    if (coordTips.length >= 5) { coordTips[0].remove(); coordTips.shift(); }
+
+    // Add crosshairs (brief)
+    const ch = document.createElement('div');
+    ch.className = 'crosshair-h';
+    ch.style.top = cy + 'px';
+    cv.appendChild(ch);
+    const cv2 = document.createElement('div');
+    cv2.className = 'crosshair-v';
+    cv2.style.left = cx + 'px';
+    cv.appendChild(cv2);
+    setTimeout(() => { ch.remove(); cv2.remove(); }, 1500);
+
+    // Add tooltip
+    const tip = document.createElement('div');
+    tip.className = 'coord-tip';
+    tip.style.left = cx + 'px';
+    tip.style.top  = cy + 'px';
+    tip.textContent = `x=${rx}  y=${ry}`;
+    cv.appendChild(tip);
+    coordTips.push(tip);
+
+    // Copy to clipboard
+    const txt = `x=${rx}&y=${ry}`;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(txt).then(() => {
+        toast(`📋 コピー: x=${rx}, y=${ry}`);
+      }).catch(() => {
+        toast(`x=${rx}, y=${ry}`);
+      });
+    } else {
+      toast(`x=${rx}, y=${ry}`);
+    }
+  }
+
+  // ═════════════════════════
+  //  Input handling
+  // ═════════════════════════
+
+  // -- Mouse --
+  vp.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'touch') return;
+    dragging = true;
+    dragStartX = e.clientX; dragStartY = e.clientY;
+    dragTx0 = tx; dragTy0 = ty;
+    vp.setPointerCapture(e.pointerId);
+  });
+  vp.addEventListener('pointermove', e => {
+    if (!dragging || e.pointerType === 'touch') return;
+    tx = dragTx0 + (e.clientX - dragStartX);
+    ty = dragTy0 + (e.clientY - dragStartY);
+    applyTf();
+  });
+  vp.addEventListener('pointerup', e => {
+    if (e.pointerType === 'touch') return;
+    if (dragging && Math.abs(e.clientX - dragStartX) < 4 && Math.abs(e.clientY - dragStartY) < 4) {
+      showCoord(e.clientX, e.clientY);
+    }
+    dragging = false;
+  });
+
+  // -- Wheel --
+  vp.addEventListener('wheel', e => {
+    e.preventDefault();
+    const r = vp.getBoundingClientRect();
+    zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY > 0 ? 0.9 : 1.1);
+  }, { passive: false });
+
+  // -- Touch --
+  let touches0 = [];
+  let tapTime = 0;
+  let singleTapTimer = null;
+  let tapX = 0, tapY = 0;
+
+  vp.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = Array.from(e.touches);
+    if (t.length === 1) {
+      dragging = true;
+      dragStartX = t[0].clientX; dragStartY = t[0].clientY;
+      dragTx0 = tx; dragTy0 = ty;
+    } else if (t.length === 2) {
+      dragging = false;
+      pinchDist0 = pDist(t);
+      const m = pMid(t);
+      pinchCx = m.x; pinchCy = m.y;
+      dragTx0 = tx; dragTy0 = ty;
+    }
+    touches0 = t;
+  }, { passive: false });
+
+  vp.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const t = Array.from(e.touches);
+    if (t.length === 1 && dragging) {
+      tx = dragTx0 + (t[0].clientX - dragStartX);
+      ty = dragTy0 + (t[0].clientY - dragStartY);
+      applyTf();
+    } else if (t.length === 2) {
+      const d = pDist(t);
+      const m = pMid(t);
+      const r = vp.getBoundingClientRect();
+      zoomAt(m.x - r.left, m.y - r.top, d / pinchDist0);
+      pinchDist0 = d;
+      tx += m.x - pinchCx;
+      ty += m.y - pinchCy;
+      pinchCx = m.x; pinchCy = m.y;
+      applyTf();
+    }
+  }, { passive: false });
+
+  vp.addEventListener('touchend', e => {
+    const remaining = Array.from(e.touches);
+    // Detect tap
+    if (remaining.length === 0 && touches0.length === 1) {
+      const ct = e.changedTouches[0];
+      const dx = Math.abs(ct.clientX - dragStartX);
+      const dy = Math.abs(ct.clientY - dragStartY);
+      if (dx < 8 && dy < 8) {
+        const now = Date.now();
+        if (now - tapTime < 300) {
+          // Double tap
+          clearTimeout(singleTapTimer);
+          tapTime = 0;
+          if (hasPin) {
+            const fitSc = Math.min(vp.clientWidth / svgW, vp.clientHeight / svgH) * 0.95;
+            if (Math.abs(sc - ZOOM_PIN) < 0.5) {
+              fitAll();
+            } else {
+              resetToPin();
+            }
+          } else {
+            const fitSc = Math.min(vp.clientWidth / svgW, vp.clientHeight / svgH) * 0.95;
+            if (sc > fitSc * 1.5) { fitAll(); } else {
+              const r = vp.getBoundingClientRect();
+              const sx = (ct.clientX - r.left - tx) / sc;
+              const sy = (ct.clientY - r.top  - ty) / sc;
+              animTo(vp.clientWidth / 2 - sx * 3, vp.clientHeight / 2 - sy * 3, 3);
+            }
+          }
+        } else {
+          tapTime = now;
+          tapX = ct.clientX; tapY = ct.clientY;
+          singleTapTimer = setTimeout(() => {
+            showCoord(tapX, tapY);
+          }, 310);
+        }
+      }
+    }
+    dragging = false;
+    if (remaining.length === 1) {
+      dragging = true;
+      dragStartX = remaining[0].clientX;
+      dragStartY = remaining[0].clientY;
+      dragTx0 = tx; dragTy0 = ty;
+    }
+  });
+
+  function pDist(t) {
+    const dx = t[0].clientX - t[1].clientX;
+    const dy = t[0].clientY - t[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+  function pMid(t) {
+    return { x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 };
+  }
+  function zoomAt(cx, cy, factor) {
+    const ns = Math.min(Math.max(sc * factor, MIN_SCALE), MAX_SCALE);
+    const r = ns / sc;
+    tx = cx - (cx - tx) * r;
+    ty = cy - (cy - ty) * r;
+    sc = ns;
+    applyTf();
+  }
+
+  // ── Placeholder ──
+  function makePlaceholder(w, h) {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+      <rect width="${w}" height="${h}" fill="#f8fafc" stroke="#e2e8f0" stroke-width="2"/>
+      <g stroke="#e2e8f0" stroke-width="0.5" opacity="0.5">
+        ${Array.from({length:Math.floor(w/50)},(_, i)=>`<line x1="${(i+1)*50}" y1="0" x2="${(i+1)*50}" y2="${h}"/>`).join('')}
+        ${Array.from({length:Math.floor(h/50)},(_, i)=>`<line x1="0" y1="${(i+1)*50}" x2="${w}" y2="${(i+1)*50}"/>`).join('')}
+      </g>
+      <g fill="#94a3b8" font-family="monospace" font-size="9" opacity="0.5">
+        ${Array.from({length:Math.floor(w/100)},(_, i)=>
+          Array.from({length:Math.floor(h/100)},(_, j)=>
+            `<text x="${(i+1)*100}" y="${(j+1)*100}" text-anchor="middle">${(i+1)*100},${(j+1)*100}</text>`
+          ).join('')
+        ).join('')}
+      </g>
+      <text x="${w/2}" y="${h/2-10}" text-anchor="middle" font-family="sans-serif" font-size="16" fill="#94a3b8">layout.svg が見つかりません</text>
+      <text x="${w/2}" y="${h/2+10}" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#94a3b8">同じフォルダに配置してください</text>
+    </svg>`;
+  }
+
+  // ── Resize ──
+  window.addEventListener('resize', () => {
+    // Maintain current center point
+  });
+
+})();
+</script>
+</body>
+</html>
